@@ -1,0 +1,59 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+
+    "version": "2.0.0",
+    "tasks": [
+
+        // Сборка:
+        {
+            "label": "compile",
+            "type": "shell",
+            "command": "go",
+            "args": [
+                "build",
+                "-o",
+                "../bin/GoMirror.exe"
+            ],
+            "options": {
+                "cwd": "src",
+                "env": {
+                    "GOOS": "windows",
+                    "GOARCH": "amd64"
+                }
+            },
+            "group": "none",
+            "problemMatcher": [
+                "$go"
+            ],
+            "presentation": {
+                "clear": true
+            }
+        },
+
+        // Запуск:
+        {
+            "label": "run",
+            "type": "shell",
+            "command": "bin/GoMirror.exe",
+            "group": "none",
+            "problemMatcher": []
+        },
+
+        // Быстрая проверка:
+        {
+            "label": "fast",
+            "dependsOrder": "sequence",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": [
+                "compile",
+                "run"
+            ],
+            "problemMatcher": [],
+            "detail": "Локальный запуск в докере для отладки: компиляция, сборка образа, запуск"
+        }
+    ]
+}
