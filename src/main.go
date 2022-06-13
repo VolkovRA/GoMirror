@@ -4,133 +4,171 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
+	"time"
 )
 
-// Точка входа.
-func main() {
-	log.Println("Добро пожаловать в " + APP_NAME + " v:" + VERSION)
+// Ввод команд пользователем
+var reader *bufio.Reader
 
-	reader := bufio.NewReader(os.Stdin)
+// Сканер для коирования сайта
+var scanner *Scanner
 
-	for {
-		log.Println("--------------------------")
-		log.Println("Введите URL сайта для его копирования")
+// Инициализация перед запуском
+func init() {
+	exec.Command("cmd", "/c", "title", APP_NAME).Run()
+	exec.Command("cmd", "/c", "mode con cols=220 lines=60").Run()
 
-		// Ввод:
-		text, err := reader.ReadString('\n')
-		if err != nil {
-			log.Println("Ошибка:", err)
-			continue
-		}
-		text = strings.ReplaceAll(text, "\n", "")
-		text = strings.ReplaceAll(text, "\r", "")
-
-		// Парсим URL:
-		url, err := parseURL(text)
-		if err != nil {
-			log.Println("Ошибка:", err)
-			continue
-		}
-
-		// Подготавливаем папку:
-		dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
-		if err != nil {
-			log.Println("Ошибка: Не удалось получить расположение приложения:", err)
-			continue
-		}
-		dir += string(os.PathSeparator) + url.Host
-
-		file, err := os.Stat(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				log.Println("Создание папки: \"" + dir + "\"")
-				if err = os.Mkdir(dir, 0777); err != nil {
-					log.Println("Ошибка: Не удалось создать папку для копии:", err)
-					continue
-				}
-			} else {
-				log.Println("Ошибка: Не удалось получить папку для копии:", err)
-				continue
-			}
-		} else {
-			if file.IsDir() {
-				log.Println("Уже существует, перезаписать? (y/n) \"" + dir + "\"")
-
-				text, err = reader.ReadString('\n')
-				if err != nil {
-					log.Println("Ошибка: ", err)
-					continue
-				}
-				text = strings.ReplaceAll(text, "\n", "")
-				text = strings.ReplaceAll(text, "\r", "")
-				text = strings.ToLower(text)
-				if len(text) > 0 && text[0] == 'y' {
-
-					// Удаление старой папки:
-					log.Println("Очистка папки: \"" + dir + "\"")
-					if err = os.RemoveAll(dir); err != nil {
-						log.Println("Ошибка: Не удалось удалить старую папку:", err)
-						continue
-					}
-
-					// Создание новой, пустой:
-					if err = os.Mkdir(dir, 0777); err != nil {
-						log.Println("Ошибка: Не удалось создать папку для копии:", err)
-						continue
-					}
-
-				} else {
-					log.Println("Отменено")
-					continue
-				}
-
-			} else {
-				log.Println("Ошибка: Нельзя создать папку, занятую файлом: \"" + dir + "\"")
-				continue
-			}
-		}
-
-		// Папка готова для копирования:
-		// ...
-	}
+	reader = bufio.NewReader(os.Stdin)
+	scanner = NewScanner()
 }
 
-// Разобрать введённый пользователем URL
-func parseURL(text string) (*url.URL, error) {
-	text = strings.ToLower(text)
-	if len(text) < 5 {
-		return nil, fmt.Errorf("Слишком короткий адрес сайта")
+// Точка входа
+func main() {
+	var params = ScannerParams{
+		URL:           "",
+		ReplaceOutDir: false,
+		RepeatsMax:    10,
 	}
 
-	// HTTPS:
-	if strings.Index(text, "https://") == 0 {
-		return url.Parse(text)
-	}
+START:
 
-	// HTTP:
-	if strings.Index(text, "http://") == 0 {
-		return url.Parse(text)
-	}
+	// Запуск:
+	cls()
+	fmt.Println("Добро пожаловать в программу " + APP_NAME + " v:" + VERSION)
 
-	// Относительный:
-	if strings.Index(text, "//") == 0 {
-		return url.Parse(text)
-	}
+	// Запрос URL:
+	params.URL = inputURL("Введите URL сайта для копирования:")
 
-	// Парсим:
-	url, err := url.Parse("http://" + text)
+	// Запуск:
+	err := scanner.Start(params)
 	if err != nil {
-		return nil, err
+		fmt.Println(err)
+		if inputYes("Хотите указать другой URL? (y/n)") {
+			goto START
+		} else {
+			return
+		}
 	}
 
-	// Пустой URL:
-	if url.Host == "" {
-		return nil, fmt.Errorf("Не удалось однозначно прочитать URL")
+	// Ожидание результата:
+	for {
+		switch scanner.State() {
+		case ScannerScanning, ScannerPreparing:
+		case ScannerReady:
+			goto START
+		case ScannerComplete:
+			goto FINISH
+		case ScannerIncorrectURL:
+			cls()
+			fmt.Println(scanner.Err().Error())
+			if inputYes("Хотите указать другой URL? (y/n)") {
+				fmt.Println("Операция отменена")
+				time.Sleep(time.Second)
+				goto START
+			} else {
+				goto EXIT
+			}
+		case ScannerOutputDirExist:
+			cls()
+			if inputYes("Папка с данными для этого сайта уже существует: \"" + scanner.Dir() + "\"\nУдалить старое содержимое? (y/n)") {
+				params.ReplaceOutDir = true
+				scanner.Start(params)
+			} else {
+				fmt.Println("Операция отменена")
+				time.Sleep(time.Second)
+				goto START
+			}
+		case ScannerOutputDirError:
+			cls()
+			fmt.Println(scanner.Err().Error())
+			if inputYes("Хотите указать другой URL? (y/n)") {
+				fmt.Println("Операция отменена")
+				time.Sleep(time.Second)
+				goto START
+			} else {
+				goto EXIT
+			}
+		default:
+			cls()
+			panic("Я не знаю такого состояния сканера")
+		}
+
+		// Вывод информации и ожидание:
+		cls()
+		fmt.Println(scanner.Report(false))
+		time.Sleep(time.Millisecond * 500)
 	}
 
-	return url, nil
+FINISH:
+
+	// Завершено:
+	log.Println("\n\nОтчёт сканирования:\n" + scanner.Report(true))
+
+	cls()
+	fmt.Println(scanner.Report(true))
+	fmt.Println("Сайт скопирован")
+	fmt.Println("Нажмите ввод для выхода из программы..")
+	reader.ReadRune()
+
+EXIT:
+
+	// Выход из программы:
+	fmt.Println("Выход из программы")
+	time.Sleep(time.Second)
+	return
+}
+
+// Получить от пользователя URL сайта для копирования
+func inputURL(msg string) string {
+	var url string
+	var err error
+	for {
+		fmt.Println(msg)
+		url, err = reader.ReadString('\n')
+		if err == nil {
+			break
+		} else {
+			fmt.Println("Ошибка чтения ввода:", err)
+			time.Sleep(time.Millisecond * 200)
+		}
+	}
+	url = strings.ReplaceAll(url, "\n", "")
+	url = strings.ReplaceAll(url, "\r", "")
+	return url
+}
+
+// Получить от пользователя ввод: y/n
+func inputYes(msg string) bool {
+	var val string
+	var err error
+	for {
+		fmt.Println(msg)
+		val, err = reader.ReadString('\n')
+		if err == nil {
+			break
+		} else {
+			fmt.Println("Ошибка чтения ввода:", err)
+			time.Sleep(time.Millisecond * 200)
+		}
+	}
+
+	val = strings.ReplaceAll(val, "\n", "")
+	val = strings.ReplaceAll(val, "\r", "")
+	val = strings.ToLower(val)
+
+	if len(val) > 0 && val[0] == 'y' {
+		return true
+	}
+
+	return false
+}
+
+// Очистить вывод в консоли
+func cls() {
+	cmd := exec.Command("cmd", "/c", "cls")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
 }
