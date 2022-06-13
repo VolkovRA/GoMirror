@@ -1,0 +1,1 @@
+This is a simple console application for downloading any website to your local PC. Just enter the URL and enjoy!
